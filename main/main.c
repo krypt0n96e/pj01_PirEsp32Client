@@ -10,10 +10,11 @@
 #include "protocol_examples_common.h"
 #include "esp_http_client.h"
 #include "esp_adc/adc_oneshot.h"
+#include "driver/gpio.h"
 
 #define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_6
-#define DEVICE_ID 1
-#define HOST "http://192.168.104.79:8888"
+#define DEVICE_ID 2
+#define HOST "http://192.168.1.8:8888"
 #define MAX_HTTP_OUTPUT_BUFFER 256
 #define MAX_POST_SIZE 4096
 #define TEMP_SIZE 10
@@ -21,6 +22,8 @@
 #define TASK0_DELAY 1000
 #define TASK1_DELAY 1000
 #define TASK2_DELAY 20
+#define LED_PIN GPIO_NUM_2
+#define LED_DELAY 200
 
 static const char *TAG_HTTP_POST = "HTTP_POST";
 static const char *TAG_HTTP_GET = "HTTP_GET";
@@ -43,6 +46,7 @@ void oneshot_adc_read(int *value);
 void http_post_data(void *pvParameters);
 void http_get_data(void *pvParameters);
 void adc_oneshot_write(void *pvParameters);
+void led_toggle();
 
 void cleanup_and_exit(esp_http_client_handle_t client, char *url, char *output_buffer)
 {
@@ -95,7 +99,7 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 int http_post_json_handle(char *post_data)
 {
     esp_http_client_handle_t client = esp_http_client_init(&(esp_http_client_config_t){
-        .url = "http://192.168.104.79:8888/esp",
+        .url = "http://192.168.1.8:8888/esp",
         .event_handler = _http_event_handler,
         .method = HTTP_METHOD_POST,
     });
@@ -236,6 +240,7 @@ void http_post_data(void *pvParameters)
         }
 
         // vTaskResume(task_http_get_data);
+        led_toggle();
         vTaskDelay(TASK1_DELAY / portTICK_PERIOD_MS);
     }
 }
@@ -248,14 +253,13 @@ void http_get_data(void *pvParameters)
     while (1)
     {
         http_get_handle();
-
         if (logs == 1)
         {
             vTaskResume(task_http_post_data);
             vTaskResume(task_adc_oneshot_write);
             ESP_LOGI(TAG_HTTP_GET, "LOG START");
         }
-        else if((eTaskGetState(task_adc_oneshot_write)==eBlocked)&&(eTaskGetState(task_http_post_data)==eBlocked))
+        else if ((eTaskGetState(task_adc_oneshot_write) == eBlocked) && (eTaskGetState(task_http_post_data) == eBlocked))
         {
             vTaskSuspend(task_http_post_data);
             vTaskSuspend(task_adc_oneshot_write);
@@ -302,7 +306,16 @@ void adc_oneshot_write(void *pvParameters)
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
-
+void led_toggle()
+{
+    ESP_LOGI(TAG_HTTP_POST, "Toggling LED...");
+    // Bật đèn LED
+    gpio_set_level(LED_PIN, 1);
+    vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+    // Tắt đèn LED
+    gpio_set_level(LED_PIN, 0);
+    // vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+}
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
@@ -310,9 +323,17 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(example_connect());
 
+    // Configure GPIO for LED
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << LED_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&io_conf);
+
     xTaskCreatePinnedToCore(http_get_data, "Task0", 8192, NULL, 0, &task_http_get_data, 1);
     xTaskCreatePinnedToCore(http_post_data, "Task1", 8192, NULL, 1, &task_http_post_data, 1);
     xTaskCreatePinnedToCore(adc_oneshot_write, "Task2", 8192, NULL, 1, &task_adc_oneshot_write, 0);
+
     vTaskSuspend(task_http_post_data);
     vTaskSuspend(task_adc_oneshot_write);
 }
