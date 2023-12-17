@@ -111,6 +111,9 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 
 int devide_id_assign()
 {
+    led_toggle();
+    vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+
     char *url = (char *)pvPortMalloc(40);
     bool is_existed = 1;
     if (!url)
@@ -170,11 +173,11 @@ int devide_id_assign()
                 else
                 {
                     ESP_LOGI(TAG_ASSiGN, "Assign successull!--Device ID: %d", device_id);
-                    for (int i = 0; i < 2; i++)
-                    {
-                        led_toggle();
-                        vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
-                    }
+                    // for (int i = 0; i < 2; i++)
+                    // {
+                    //     led_toggle();
+                    //     vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+                    // }
                 }
             }
             else
