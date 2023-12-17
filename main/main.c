@@ -11,6 +11,7 @@
 #include "esp_http_client.h"
 #include "esp_adc/adc_oneshot.h"
 #include "driver/gpio.h"
+#include "time_sync.h"
 
 #define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_6
 #define HOST "http://192.168.58.79:8888"
@@ -25,6 +26,7 @@
 #define LED_DELAY 200
 
 int device_id = 1;
+time_t origin_timestamp;
 
 static const char *TAG_ASSiGN = "DEVICE_ASSIGN";
 static const char *TAG_HTTP_POST = "HTTP_POST";
@@ -51,6 +53,7 @@ void adc_oneshot_write(void *pvParameters);
 void cleanup_and_exit(esp_http_client_handle_t client, char *url, char *output_buffer);
 void led_toggle();
 int devide_id_assign();
+uint64_t xx_time_get_time();
 
 void app_main(void)
 {
@@ -58,6 +61,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(example_connect());
+    fetch_and_store_time_in_nvs(NULL);
+    origin_timestamp=(time(NULL)-esp_log_timestamp()/1000)*1000;
 
     // Configure GPIO for LED
     gpio_config_t io_conf = {
@@ -112,7 +117,7 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 int devide_id_assign()
 {
     led_toggle();
-    vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+    vTaskDelay(10 / portTICK_PERIOD_MS);
 
     char *url = (char *)pvPortMalloc(40);
     bool is_existed = 1;
@@ -259,11 +264,17 @@ void adc_oneshot_write(void *pvParameters)
 
     while (1)
     {
-        uint32_t current_time_milliseconds = esp_log_timestamp();
+        uint64_t current_time_milliseconds = esp_log_timestamp() + origin_timestamp;
+        // current_time_milliseconds = time(NULL) * 1000 + (current_time_milliseconds - (current_time_milliseconds / 1000) * 1000);
+
+        // uint64_t current_time_milliseconds = xx_time_get_time();
+
+        printf("%lld", current_time_milliseconds);
+
         int value;
         oneshot_adc_read(&value);
 
-        sprintf(temp[tempWriteIndex] + strlen(temp[tempWriteIndex]), "?%ld&%d", current_time_milliseconds, value);
+        sprintf(temp[tempWriteIndex] + strlen(temp[tempWriteIndex]), "?%lld&%d", current_time_milliseconds, value);
 
         count++;
         if (count == VALUE_PER_POST)
@@ -430,4 +441,10 @@ void led_toggle()
     // Tắt đèn LED
     gpio_set_level(LED_PIN, 0);
     // vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+}
+uint64_t xx_time_get_time()
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL));
 }
