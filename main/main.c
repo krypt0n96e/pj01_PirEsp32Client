@@ -38,8 +38,9 @@ TaskHandle_t task_http_get_data = NULL;
 TaskHandle_t task_http_post_data = NULL;
 
 static uint8_t logs = 0;
-static uint8_t writeStage = 0;
-static uint8_t tempPostIndex;
+static uint8_t writeStage[TEMP_SIZE] = {0};
+static uint8_t tempPostIndex = 0;
+static uint8_t tempWriteIndex = 0;
 static char temp[TEMP_SIZE][MAX_POST_SIZE];
 
 // Function prototypes
@@ -60,9 +61,6 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(example_connect());
-    fetch_and_store_time_in_nvs(NULL);
-    origin_timestamp=(time(NULL)-esp_log_timestamp()/1000)*1000;
 
     // Configure GPIO for LED
     gpio_config_t io_conf = {
@@ -71,6 +69,14 @@ void app_main(void)
     };
     gpio_config(&io_conf);
 
+    gpio_set_level(LED_PIN, 1);
+    ESP_ERROR_CHECK(example_connect());
+    gpio_set_level(LED_PIN, 0);
+
+    fetch_and_store_time_in_nvs(NULL);
+
+    origin_timestamp = (time(NULL) - esp_log_timestamp() / 1000) * 1000;
+
     while (devide_id_assign())
     {
     }
@@ -78,7 +84,6 @@ void app_main(void)
     xTaskCreatePinnedToCore(http_get_data, "Task0", 8192, NULL, 0, &task_http_get_data, 1);
     xTaskCreatePinnedToCore(http_post_data, "Task1", 8192, NULL, 1, &task_http_post_data, 1);
     xTaskCreatePinnedToCore(adc_oneshot_write, "Task2", 8192, NULL, 1, &task_adc_oneshot_write, 0);
-
     vTaskSuspend(task_http_post_data);
     vTaskSuspend(task_adc_oneshot_write);
 }
@@ -116,8 +121,6 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 
 int devide_id_assign()
 {
-    led_toggle();
-    vTaskDelay(10 / portTICK_PERIOD_MS);
 
     char *url = (char *)pvPortMalloc(40);
     bool is_existed = 1;
@@ -178,11 +181,11 @@ int devide_id_assign()
                 else
                 {
                     ESP_LOGI(TAG_ASSiGN, "Assign successull!--Device ID: %d", device_id);
-                    // for (int i = 0; i < 2; i++)
-                    // {
-                    //     led_toggle();
-                    //     vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
-                    // }
+                    for (int i = 0; i < 2; i++)
+                    {
+                        led_toggle();
+                        vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+                    }
                 }
             }
             else
@@ -204,7 +207,7 @@ void http_post_data(void *pvParameters)
     {
         // vTaskSuspend(task_http_get_data);
 
-        if (writeStage)
+        if (writeStage[tempPostIndex])
         {
             ESP_LOGI(TAG_HTTP_POST, "Sending HTTP POST request...");
             post_data = (char *)pvPortMalloc(MAX_POST_SIZE + 41);
@@ -216,14 +219,20 @@ void http_post_data(void *pvParameters)
             snprintf(post_data, MAX_POST_SIZE + 40, "{\"device_id\":\"%d\",\"data\":\"%s\"}", device_id, temp[tempPostIndex]);
             if (http_post_json_handle(post_data) == 0)
             {
-                writeStage = 0;
+                writeStage[tempPostIndex] = 0;
+                tempPostIndex++;
+                if (tempPostIndex == TEMP_SIZE)
+                {
+                    tempPostIndex = 0;
+                }
             }
             vPortFree(post_data);
             ESP_LOGI(TAG_HTTP_POST, "HTTP POST request completed");
+            led_toggle();
         }
 
         // vTaskResume(task_http_get_data);
-        led_toggle();
+        // led_toggle();
         vTaskDelay(TASK1_DELAY / portTICK_PERIOD_MS);
     }
 }
@@ -256,7 +265,6 @@ void http_get_data(void *pvParameters)
 void adc_oneshot_write(void *pvParameters)
 {
     int count = 0;
-    uint8_t tempWriteIndex = 0;
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = pdMS_TO_TICKS(TASK2_DELAY);
 
@@ -269,20 +277,16 @@ void adc_oneshot_write(void *pvParameters)
 
         // uint64_t current_time_milliseconds = xx_time_get_time();
 
-        printf("%lld", current_time_milliseconds);
-
         int value;
         oneshot_adc_read(&value);
 
         sprintf(temp[tempWriteIndex] + strlen(temp[tempWriteIndex]), "?%lld&%d", current_time_milliseconds, value);
-
         count++;
         if (count == VALUE_PER_POST)
         {
             count = 0;
-            writeStage = 1;
+            writeStage[tempWriteIndex] = 1;
             tempWriteIndex++;
-            tempPostIndex = tempWriteIndex - 1;
 
             if (tempWriteIndex == TEMP_SIZE)
             {
