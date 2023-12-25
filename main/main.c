@@ -12,20 +12,25 @@
 #include "esp_adc/adc_oneshot.h"
 #include "driver/gpio.h"
 #include "time_sync.h"
+#include "esp_system.h"
+#include "esp_mac.h"
 
-#define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_6
-#define HOST "http://192.168.58.79:8888"
+#define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_0
+#define HOST "http://192.168.219.79:8888"
 #define MAX_HTTP_OUTPUT_BUFFER 256
 #define MAX_POST_SIZE 4096
-#define TEMP_SIZE 10
-#define VALUE_PER_POST 200
+#define TEMP_SIZE 20
+#define VALUE_PER_POST 25
 #define TASK0_DELAY 1000
-#define TASK1_DELAY 1000
+#define TASK1_DELAY 100
 #define TASK2_DELAY 20
 #define LED_PIN GPIO_NUM_2
-#define LED_DELAY 200
+#define LED_DELAY 10
+// Note: (TASK1_DELAY+LED_DELAY*2)<VALUE_PER_POST*TASK2_DELAY
+// Note: max lost conection time = TEMP_SIZE*TASK2_DELAY*VALUE_PER_POST-TASK1_DELAY*VALUE_PER_POST
 
-int device_id = 1;
+// int device_id = 1;
+char mac_adr[20];
 time_t origin_timestamp;
 
 static const char *TAG_ASSiGN = "DEVICE_ASSIGN";
@@ -53,11 +58,22 @@ void http_get_data(void *pvParameters);
 void adc_oneshot_write(void *pvParameters);
 void cleanup_and_exit(esp_http_client_handle_t client, char *url, char *output_buffer);
 void led_toggle();
-int devide_id_assign();
-uint64_t xx_time_get_time();
+// int device_id_assign();
+int mac_adr_assign();
+// uint64_t xx_time_get_time();
 
 void app_main(void)
 {
+    uint8_t mac[6];
+    esp_err_t ret = esp_efuse_mac_get_default(mac);
+    if (ret != ESP_OK) {
+        printf("Failed to get MAC address\n");
+        return;
+    }
+
+    // In ra địa chỉ MAC
+    sprintf(mac_adr,"%02X:%02X:%02X:%02X:%02X:%02X",mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -77,7 +93,7 @@ void app_main(void)
 
     origin_timestamp = (time(NULL) - esp_log_timestamp() / 1000) * 1000;
 
-    while (devide_id_assign())
+    while (!mac_adr_assign())
     {
     }
 
@@ -119,11 +135,92 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-int devide_id_assign()
+// int device_id_assign()
+// {
+
+//     char *url = (char *)pvPortMalloc(40);
+//     bool is_existed = 1;
+//     if (!url)
+//     {
+//         ESP_LOGE(TAG_ASSiGN, "Failed to allocate memory for URL");
+//         return 1;
+//     }
+
+//     char *output_buffer = (char *)pvPortMalloc(MAX_HTTP_OUTPUT_BUFFER + 1);
+//     if (!output_buffer)
+//     {
+//         ESP_LOGE(TAG_ASSiGN, "Failed to allocate memory for output buffer");
+//         vPortFree(url);
+//         return 1;
+//     }
+
+//     snprintf(url, 40, "%s/assign?id=%d", HOST, device_id);
+
+//     esp_http_client_config_t config = {
+//         .url = url,
+//         .method = HTTP_METHOD_GET,
+//     };
+//     esp_http_client_handle_t client = esp_http_client_init(&config);
+
+//     if (!client)
+//     {
+//         ESP_LOGE(TAG_ASSiGN, "Failed to initialize HTTP client");
+//         return 1;
+//     }
+
+//     esp_err_t err = esp_http_client_open(client, 0);
+//     if (err != ESP_OK)
+//     {
+//         ESP_LOGE(TAG_ASSiGN, "Failed to open HTTP connection: %s", esp_err_to_name(err));
+//     }
+//     else
+//     {
+//         int content_length = esp_http_client_fetch_headers(client);
+//         if (content_length < 0)
+//         {
+//             ESP_LOGE(TAG_ASSiGN, "HTTP client fetch headers failed");
+//         }
+//         else
+//         {
+//             int data_read = esp_http_client_read_response(client, output_buffer, MAX_HTTP_OUTPUT_BUFFER);
+//             if (data_read >= 0)
+//             {
+//                 ESP_LOGI(TAG_ASSiGN, "HTTP GET Status = %d, content_length = %" PRId64,
+//                          esp_http_client_get_status_code(client),
+//                          esp_http_client_get_content_length(client));
+//                 is_existed = output_buffer[18] - '0';
+//                 if (is_existed)
+//                 {
+//                     ESP_LOGE(TAG_ASSiGN, "ID %d is existed", device_id);
+//                     device_id++;
+//                 }
+//                 else
+//                 {
+//                     ESP_LOGI(TAG_ASSiGN, "Assign successull!--Device ID: %d", device_id);
+//                     for (int i = 0; i < 2; i++)
+//                     {
+//                         led_toggle();
+//                         vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
+//                     }
+//                 }
+//             }
+//             else
+//             {
+//                 ESP_LOGE(TAG_HTTP_GET, "Failed to read response");
+//             }
+//         }
+//     }
+
+//     cleanup_and_exit(client, url, output_buffer);
+//     return is_existed;
+// }
+
+
+int mac_adr_assign()
 {
 
-    char *url = (char *)pvPortMalloc(40);
-    bool is_existed = 1;
+    char *url = (char *)pvPortMalloc(64);
+    bool is_assigned = 0;
     if (!url)
     {
         ESP_LOGE(TAG_ASSiGN, "Failed to allocate memory for URL");
@@ -138,7 +235,7 @@ int devide_id_assign()
         return 1;
     }
 
-    snprintf(url, 40, "%s/assign?id=%d", HOST, device_id);
+    snprintf(url, 64, "%s/assign?&mac_adr=%s", HOST, mac_adr);
 
     esp_http_client_config_t config = {
         .url = url,
@@ -172,20 +269,20 @@ int devide_id_assign()
                 ESP_LOGI(TAG_ASSiGN, "HTTP GET Status = %d, content_length = %" PRId64,
                          esp_http_client_get_status_code(client),
                          esp_http_client_get_content_length(client));
-                is_existed = output_buffer[18] - '0';
-                if (is_existed)
+                is_assigned = output_buffer[19] - '0';
+                // printf("________________________________________________%c",output_buffer[19]);
+                if (is_assigned)
                 {
-                    ESP_LOGE(TAG_ASSiGN, "ID %d is existed", device_id);
-                    device_id++;
-                }
-                else
-                {
-                    ESP_LOGI(TAG_ASSiGN, "Assign successull!--Device ID: %d", device_id);
-                    for (int i = 0; i < 2; i++)
+                    ESP_LOGI(TAG_ASSiGN, "Assign successull!--Mac address: %s", mac_adr);
+                    for (int i = 0; i < 2; i++)   
                     {
                         led_toggle();
                         vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
                     }
+                }
+                else
+                {
+                    ESP_LOGI(TAG_ASSiGN, "Assign failed!--Mac address: %s", mac_adr);
                 }
             }
             else
@@ -196,7 +293,7 @@ int devide_id_assign()
     }
 
     cleanup_and_exit(client, url, output_buffer);
-    return is_existed;
+    return is_assigned;
 }
 
 void http_post_data(void *pvParameters)
@@ -210,13 +307,14 @@ void http_post_data(void *pvParameters)
         if (writeStage[tempPostIndex])
         {
             ESP_LOGI(TAG_HTTP_POST, "Sending HTTP POST request...");
-            post_data = (char *)pvPortMalloc(MAX_POST_SIZE + 41);
+            post_data = (char *)pvPortMalloc(MAX_POST_SIZE + 65);
             if (!post_data)
             {
                 ESP_LOGE(TAG_HTTP_POST, "Failed to allocate memory for post_data");
-                vTaskDelete(NULL);
+                // vTaskDelete(NULL);
             }
-            snprintf(post_data, MAX_POST_SIZE + 40, "{\"device_id\":\"%d\",\"data\":\"%s\"}", device_id, temp[tempPostIndex]);
+            // snprintf(post_data, MAX_POST_SIZE + 40, "{\"device_id\":\"%d\",\"data\":\"%s\"}", device_id, temp[tempPostIndex]);
+            snprintf(post_data, MAX_POST_SIZE + 64, "{\"mac_adr\":\"%s\",\"data\":\"%s\"}", mac_adr, temp[tempPostIndex]);
             if (http_post_json_handle(post_data) == 0)
             {
                 writeStage[tempPostIndex] = 0;
@@ -318,8 +416,16 @@ void cleanup_and_exit(esp_http_client_handle_t client, char *url, char *output_b
 
 int http_post_json_handle(char *post_data)
 {
+    char *url = (char *)pvPortMalloc(64);
+    if (!url)
+    {
+        ESP_LOGE(TAG_HTTP_POST, "Failed to allocate memory for URL");
+        return 1;
+    }
+    snprintf(url, 64, "%s/esp", HOST);
+
     esp_http_client_handle_t client = esp_http_client_init(&(esp_http_client_config_t){
-        .url = "http://192.168.58.79:8888/esp",
+        .url = url,
         .event_handler = _http_event_handler,
         .method = HTTP_METHOD_POST,
     });
@@ -351,7 +457,7 @@ int http_post_json_handle(char *post_data)
 
 void http_get_handle()
 {
-    char *url = (char *)pvPortMalloc(40);
+    char *url = (char *)pvPortMalloc(64);
     if (!url)
     {
         ESP_LOGE(TAG_HTTP_GET, "Failed to allocate memory for URL");
@@ -366,7 +472,8 @@ void http_get_handle()
         return;
     }
 
-    snprintf(url, 40, "%s/device?id=%d", HOST, device_id);
+    // snprintf(url, 40, "%s/device?id=%d", HOST, device_id);
+    snprintf(url, 64, "%s/device?mac_adr=%s", HOST, mac_adr);
 
     esp_http_client_config_t config = {
         .url = url,
@@ -403,9 +510,11 @@ void http_get_handle()
                          esp_http_client_get_content_length(client));
                 if (esp_http_client_get_status_code(client) == 404)
                 {
-                    devide_id_assign();
+                    // device_id_assign();
+                    mac_adr_assign();
                 }
                 logs = output_buffer[23] - '0';
+                // printf("________________________________________________%c",output_buffer[23]);
             }
             else
             {
@@ -446,9 +555,9 @@ void led_toggle()
     gpio_set_level(LED_PIN, 0);
     // vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
 }
-uint64_t xx_time_get_time()
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL));
-}
+// uint64_t xx_time_get_time()
+// {
+//     struct timeval tv;
+//     gettimeofday(&tv, NULL);
+//     return (tv.tv_sec * 1000LL + (tv.tv_usec / 1000LL));
+// }
