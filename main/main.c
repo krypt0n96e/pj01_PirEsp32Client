@@ -14,18 +14,22 @@
 #include "time_sync.h"
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "cJSON.h"
 
 #define EXAMPLE_ADC1_CHAN0 ADC_CHANNEL_0
-#define HOST "http://192.168.219.79:8888"
+// #define HOST "http://192.168.1.9:8888"
+#define HOST "http://192.168.1.12:8888"
 #define MAX_HTTP_OUTPUT_BUFFER 256
-#define MAX_POST_SIZE 4096
-#define TEMP_SIZE 20
-#define VALUE_PER_POST 25
-#define TASK0_DELAY 1000
-#define TASK1_DELAY 100
+#define MAX_POST_SIZE 8192
+#define TEMP_SIZE 10
+#define VALUE_PER_POST 300
+#define TASK0_DELAY 1500
+#define TASK1_DELAY 1500
 #define TASK2_DELAY 20
 #define LED_PIN GPIO_NUM_2
-#define LED_DELAY 10
+#define LED_DELAY 100
+// CONFIG_EXAMPLE_WIFI_SSID="DienT3"
+// CONFIG_EXAMPLE_WIFI_PASSWORD="diennguyen123"
 // Note: (TASK1_DELAY+LED_DELAY*2)<VALUE_PER_POST*TASK2_DELAY
 // Note: max lost conection time = TEMP_SIZE*TASK2_DELAY*VALUE_PER_POST-TASK1_DELAY*VALUE_PER_POST
 
@@ -66,14 +70,15 @@ void app_main(void)
 {
     uint8_t mac[6];
     esp_err_t ret = esp_efuse_mac_get_default(mac);
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK)
+    {
         printf("Failed to get MAC address\n");
         return;
     }
 
     // In ra địa chỉ MAC
-    sprintf(mac_adr,"%02X:%02X:%02X:%02X:%02X:%02X",mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    
+    sprintf(mac_adr, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -215,7 +220,6 @@ static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 //     return is_existed;
 // }
 
-
 int mac_adr_assign()
 {
 
@@ -269,12 +273,31 @@ int mac_adr_assign()
                 ESP_LOGI(TAG_ASSiGN, "HTTP GET Status = %d, content_length = %" PRId64,
                          esp_http_client_get_status_code(client),
                          esp_http_client_get_content_length(client));
-                is_assigned = output_buffer[19] - '0';
+                // is_assigned = output_buffer[19] - '0';
+                cJSON *json_root = cJSON_Parse(output_buffer);
+                if (json_root == NULL)
+                {
+                    ESP_LOGE(TAG_HTTP_GET, "Failed to parse JSON response");
+                }
+                else
+                {
+                    cJSON *assign_json = cJSON_GetObjectItem(json_root, "is_assigned");
+                    if (assign_json != NULL && cJSON_IsNumber(assign_json))
+                    {
+                        is_assigned = assign_json->valueint;
+                    }
+                    else
+                    {
+                        ESP_LOGE(TAG_HTTP_GET, "Failed to get 'is_assigned' from JSON response");
+                    }
+
+                    cJSON_Delete(json_root);
+                }
                 // printf("________________________________________________%c",output_buffer[19]);
                 if (is_assigned)
                 {
                     ESP_LOGI(TAG_ASSiGN, "Assign successull!--Mac address: %s", mac_adr);
-                    for (int i = 0; i < 2; i++)   
+                    for (int i = 0; i < 2; i++)
                     {
                         led_toggle();
                         vTaskDelay(LED_DELAY / portTICK_PERIOD_MS);
@@ -513,8 +536,29 @@ void http_get_handle()
                     // device_id_assign();
                     mac_adr_assign();
                 }
-                logs = output_buffer[23] - '0';
-                // printf("________________________________________________%c",output_buffer[23]);
+                // logs = output_buffer[23] - '0';
+                // logs = output_buffer[15] - '0';
+                // puts(output_buffer);
+                cJSON *json_root = cJSON_Parse(output_buffer);
+                if (json_root == NULL)
+                {
+                    ESP_LOGE(TAG_HTTP_GET, "Failed to parse JSON response");
+                }
+                else
+                {
+                    cJSON *logs_json = cJSON_GetObjectItem(json_root, "logs");
+                    if (logs_json != NULL && cJSON_IsNumber(logs_json))
+                    {
+                        logs = logs_json->valueint;
+                        ESP_LOGI(TAG_HTTP_GET, "Logs: %d", logs);
+                    }
+                    else
+                    {
+                        ESP_LOGE(TAG_HTTP_GET, "Failed to get 'logs' from JSON response");
+                    }
+
+                    cJSON_Delete(json_root);
+                }
             }
             else
             {
